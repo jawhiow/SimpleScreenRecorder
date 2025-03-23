@@ -24,21 +24,28 @@ along with SimpleScreenRecorder.  If not, see <http://www.gnu.org/licenses/>.
 #pragma once
 #include "Global.h"
 
+#include <QLabel>
+
+class ElidedLabelPrivate;
+
 // A label that elides its text when not enough geometry is available to show all of the text.
 // Currently only capable of one-line.
 class ElidedLabel : public QLabel {
 	Q_OBJECT
 
 private:
+	ElidedLabelPrivate *d;
+
 	Qt::TextElideMode m_elide_mode;
 	QString m_cached_elided_text;
+	QString m_full_text; // original full text before eliding
 
 public:
 	ElidedLabel(QWidget* parent = NULL, Qt::WindowFlags f = Qt::WindowFlags());
 	ElidedLabel(const QString& txt, QWidget* parent = NULL, Qt::WindowFlags f = Qt::WindowFlags());
 	ElidedLabel(const QString& txt, Qt::TextElideMode elideMode = Qt::ElideRight, QWidget* parent = NULL, Qt::WindowFlags f = Qt::WindowFlags());
+	~ElidedLabel();
 
-public:
 	// Set the elide mode used for displaying text.
 	inline void setElideMode(Qt::TextElideMode elideMode) {
 		m_elide_mode = elideMode;
@@ -50,8 +57,13 @@ public:
 		return m_elide_mode;
 	}
 
+	inline QString fullText() const { return m_full_text; }
+
 public: // QLabel overrides
-	void setText(const QString&); // note: not virtual so no polymorphism ...
+	virtual void setText(const QString&);
+	virtual void setToolTip(const QString &tooltip);
+	virtual QSize minimumSizeHint() const override;
+	virtual QSize sizeHint() const override;
 
 protected: // QLabel overrides
 	virtual void paintEvent(QPaintEvent*) override;
@@ -60,5 +72,7 @@ protected: // QLabel overrides
 protected:
 	// Cache the elided text so as to not recompute it every paint event
 	void cacheElidedText(int w);
+
+	void updateEliding();
 
 };

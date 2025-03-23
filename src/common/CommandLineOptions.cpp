@@ -45,6 +45,8 @@ void PrintOptionHelp() {
 		"  --activate-schedule   Activate the recording schedule immediately.\n"
 		"  --syncdiagram         Show synchronization diagram (for debugging).\n"
 		"  --benchmark           Run the internal benchmark.\n"
+		"  --backend             Run in backend mode without GUI, with HTTP server.\n"
+		"  --http-port=PORT      Set the HTTP server port (default: 8080).\n"
 		"\n"
 		"Commands accepted through stdin:\n"
 		"  record-start          Start the recording.\n"
@@ -103,11 +105,11 @@ void CheckOptionHasNoValue(const QString &option, const QString &value) {
 
 CommandLineOptions::CommandLineOptions() {
 	assert(s_instance == NULL);
-
-	// default values
+	s_instance = this;
 	m_settings_file = DefaultSettingsFile();
 	m_log_file = QString();
 	m_stats_file = QString();
+	m_output_file = QString();
 	m_redirect_stderr = true;
 	m_systray = true;
 	m_start_hidden = false;
@@ -116,8 +118,8 @@ CommandLineOptions::CommandLineOptions() {
 	m_sync_diagram = false;
 	m_benchmark = false;
 	m_gui = true;
-
-	s_instance = this;
+	m_backend = false;
+	m_http_port = 8080;
 }
 
 CommandLineOptions::~CommandLineOptions() {
@@ -191,6 +193,21 @@ void CommandLineOptions::Parse() {
 				CheckOptionHasNoValue(option, value);
 				m_benchmark = true;
 				m_gui = false;
+			} else if(option == "--backend") {
+				CheckOptionHasNoValue(option, value);
+				m_backend = true;
+				m_gui = false;
+				m_start_hidden = true;
+			} else if(option == "--http-port") {
+				CheckOptionHasValue(option, value);
+				bool ok;
+				int port = value.toInt(&ok);
+				if(!ok || port <= 0 || port > 65535) {
+					Logger::LogError("[CommandLineOptions::Parse] " + Logger::tr("Error: HTTP port must be between 1 and 65535!"));
+					PrintOptionHelp();
+					throw CommandLineException();
+				}
+				m_http_port = port;
 			} else {
 				Logger::LogError("[CommandLineOptions::Parse] " + Logger::tr("Error: Unknown command-line option '%1'!").arg(option));
 				PrintOptionHelp();

@@ -27,6 +27,99 @@ along with SimpleScreenRecorder.  If not, see <http://www.gnu.org/licenses/>.
 #include "Logger.h"
 #include "MainWindow.h"
 #include "ScreenScaling.h"
+#include "HTTPServer.h"
+#include "PageRecord.h"
+
+#include <signal.h>
+#include <execinfo.h>
+#include <QFileInfo>
+#include <QDir>
+
+// 信号处理函数
+void SignalHandler(int signal) {
+	// 生成堆栈跟踪
+	const int max_frames = 100;
+	void* stack_frames[max_frames];
+	int frame_count = backtrace(stack_frames, max_frames);
+	char** symbols = backtrace_symbols(stack_frames, frame_count);
+	
+	// 创建错误消息
+	QString error_message = QString("Program received signal %1\n").arg(signal);
+	error_message += "Stack trace:\n";
+	
+	// 添加堆栈帧
+	for(int i = 0; i < frame_count; ++i) {
+		error_message += QString("  %1\n").arg(symbols[i]);
+	}
+	
+	// 记录错误
+	if(Logger::GetInstance() != NULL) {
+		Logger::LogError(error_message);
+	} else {
+		fprintf(stderr, "%s\n", error_message.toUtf8().constData());
+	}
+	
+	// 释放符号字符串
+	free(symbols);
+	
+	// 写入完成，退出
+	exit(1);
+}
+
+// 设置信号处理程序
+void SetupSignalHandlers() {
+	signal(SIGSEGV, SignalHandler);  // 段错误
+	signal(SIGABRT, SignalHandler);  // 异常终止
+	signal(SIGFPE, SignalHandler);   // 浮点异常
+	signal(SIGILL, SignalHandler);   // 非法指令
+	signal(SIGTERM, SignalHandler);  // 终止信号
+}
+
+// 打印对象状态的调试函数
+void DumpObjectState(MainWindow *mainwindow) {
+	QString state = "Object State Dump:\n";
+	
+	// 检查MainWindow
+	if(mainwindow == NULL) {
+		state += "- MainWindow: NULL\n";
+	} else {
+		state += "- MainWindow: Valid\n";
+		
+		// 检查PageRecord
+		PageRecord *page_record = mainwindow->GetPageRecord();
+		if(page_record == NULL) {
+			state += "- PageRecord: NULL\n";
+		} else {
+			state += "- PageRecord: Valid\n";
+			state += QString("  - IsRecording: %1\n").arg(page_record->IsRecording() ? "yes" : "no");
+			state += QString("  - IsPaused: %1\n").arg(page_record->IsPaused() ? "yes" : "no");
+			state += QString("  - CurrentFileName: %1\n").arg(page_record->GetCurrentFileName());
+		}
+		
+		// 检查PageInput
+		PageInput *page_input = mainwindow->GetPageInput();
+		if(page_input == NULL) {
+			state += "- PageInput: NULL\n";
+		} else {
+			state += "- PageInput: Valid\n";
+			state += QString("  - VideoBackend: %1\n").arg(page_input->GetVideoBackend());
+			state += QString("  - AudioEnabled: %1\n").arg(page_input->GetAudioEnabled() ? "yes" : "no");
+		}
+		
+		// 检查PageOutput - 避免使用前向声明类的方法
+		PageOutput *page_output = mainwindow->GetPageOutput();
+		if(page_output == NULL) {
+			state += "- PageOutput: NULL\n";
+		} else {
+			state += "- PageOutput: Valid\n";
+			// 不使用 GetFile() 方法，因为 PageOutput 是不完整类型
+			// state += QString("  - File: %1\n").arg(page_output->GetFile());
+		}
+	}
+	
+	// 记录状态
+	Logger::LogInfo(state);
+}
 
 int main(int argc, char* argv[]) {
 
@@ -89,7 +182,7 @@ int main(int argc, char* argv[]) {
 	}
 
 	// do we need to continue?
-	if(!CommandLineOptions::GetBenchmark() && !CommandLineOptions::GetGui()) {
+	if(!CommandLineOptions::GetBenchmark() && !CommandLineOptions::GetGui() && !CommandLineOptions::GetBackend()) {
 		return 0;
 	}
 
@@ -116,13 +209,113 @@ int main(int argc, char* argv[]) {
 	// load icons
 	LoadIcons();
 
+	// 设置信号处理程序来捕获崩溃
+	SetupSignalHandlers();
+
 	// start the program
 	int ret = 0;
 	if(CommandLineOptions::GetBenchmark()) {
+		Logger::LogInfo(Logger::tr("Starting benchmark ..."));
+		
 		Benchmark();
+		
+		return 0;
 	}
-	if(CommandLineOptions::GetGui()) {
-
+	
+	// backend mode?
+	if(CommandLineOptions::GetStartRecording() || !CommandLineOptions::GetOutputFile().isEmpty()) {
+		Logger::LogInfo(Logger::tr("Starting in backend mode ..."));
+		Logger::LogInfo(Logger::tr("Output file: ") + CommandLineOptions::GetOutputFile());
+		
+		try {
+			// create the main window hidden
+			Logger::LogInfo(Logger::tr("Creating hidden main window ..."));
+			MainWindow mainwindow(true);
+			
+			// dump initial state
+			Logger::LogInfo(Logger::tr("Dumping initial object state ..."));
+			DumpObjectState(&mainwindow);
+			
+			// get the right pages
+			Logger::LogInfo(Logger::tr("Getting UI pages ..."));
+			PageInput *pageinput = mainwindow.GetPageInput();
+			if(pageinput == NULL) {
+				Logger::LogError(Logger::tr("Error: PageInput is NULL!"));
+				return 1;
+			}
+			
+			PageOutput *pageoutput = mainwindow.GetPageOutput();
+			if(pageoutput == NULL) {
+				Logger::LogError(Logger::tr("Error: PageOutput is NULL!"));
+				return 1;
+			}
+			
+			PageRecord *pagerecord = mainwindow.GetPageRecord();
+			if(pagerecord == NULL) {
+				Logger::LogError(Logger::tr("Error: PageRecord is NULL!"));
+				return 1;
+			}
+			
+			// load settings
+			Logger::LogInfo(Logger::tr("Loading settings ..."));
+			mainwindow.LoadSettings();
+			
+			// set the output file if needed
+			if(!CommandLineOptions::GetOutputFile().isEmpty()) {
+				Logger::LogInfo(Logger::tr("Setting output file to: ") + CommandLineOptions::GetOutputFile());
+				pageoutput->SetOutput(CommandLineOptions::GetOutputFile());
+			}
+			
+			// start recording if needed
+			if(CommandLineOptions::GetStartRecording()) {
+				Logger::LogInfo(Logger::tr("Starting recording automatically ..."));
+				try {
+					if(!pagerecord->TryStartPage()) {
+						Logger::LogError(Logger::tr("Failed to start recording!"));
+						return 1;
+					}
+					Logger::LogInfo(Logger::tr("Recording started successfully."));
+				} catch(const std::exception& e) {
+					Logger::LogError(Logger::tr("Error starting recording: ") + e.what());
+					return 1;
+				}
+			}
+			
+			// create HTTP server if in backend mode
+			if(CommandLineOptions::GetBackend()) {
+				Logger::LogInfo(Logger::tr("Starting HTTP server for backend mode ..."));
+				try {
+					HTTPServer server(pagerecord);
+					server.Start(CommandLineOptions::GetHttpPort());
+					Logger::LogInfo(Logger::tr("HTTP server started on port %1").arg(CommandLineOptions::GetHttpPort()));
+					
+					// start event loop
+					return application.exec();
+				} catch(const std::exception& e) {
+					Logger::LogError(Logger::tr("HTTP server error: ") + e.what());
+					return 1;
+				}
+			}
+			
+			// if we get here and no recording was started, just show the window
+			if(!CommandLineOptions::GetStartRecording()) {
+				Logger::LogInfo(Logger::tr("No recording started, showing main window."));
+				mainwindow.show();
+				return application.exec();
+			}
+			
+			// if we get here, recording started but no HTTP server, so just run the app
+			return application.exec();
+			
+		} catch(const std::exception& e) {
+			Logger::LogError(Logger::tr("Backend error: ") + e.what());
+			return 1;
+		} catch(...) {
+			Logger::LogError(Logger::tr("Unknown backend error!"));
+			return 1;
+		}
+	}
+	else if(CommandLineOptions::GetGui()) {
 		// create hotkey listener
 		HotkeyListener hotkey_listener;
 		Q_UNUSED(hotkey_listener);
@@ -132,7 +325,6 @@ int main(int argc, char* argv[]) {
 
 		// run application
 		ret = application.exec();
-
 	}
 
 	// stop main program

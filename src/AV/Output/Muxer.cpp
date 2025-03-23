@@ -86,13 +86,24 @@ Muxer::~Muxer() {
 }
 
 VideoEncoder* Muxer::AddVideoEncoder(const QString& codec_name, const std::vector<std::pair<QString, QString> >& codec_options,
-									 unsigned int bit_rate, unsigned int width, unsigned int height, unsigned int frame_rate) {
+									 unsigned int bit_rate, unsigned int width, unsigned int height, unsigned int frame_rate, double time_base) {
 	AVCodec *codec = FindCodec(codec_name);
 	AVCodecContext *codec_context = NULL;
 	AVStream *stream = AddStream(codec, &codec_context);
 	VideoEncoder *encoder;
 	AVDictionary *options = NULL;
 	try {
+		// 设置时基，如果提供了有效值
+		if(time_base > 0.0) {
+			codec_context->time_base.num = (int)(time_base * 1000000.0);
+			codec_context->time_base.den = 1000000;
+			// 简化分数
+			av_reduce(&codec_context->time_base.num, &codec_context->time_base.den,
+					  codec_context->time_base.num, codec_context->time_base.den, 1000000);
+			Logger::LogInfo("[Muxer::AddVideoEncoder] " + Logger::tr("Using custom time base: %1/%2 (%3).")
+							.arg(codec_context->time_base.num).arg(codec_context->time_base.den).arg(time_base));
+		}
+		
 		VideoEncoder::PrepareStream(stream, codec_context, codec, &options, codec_options, bit_rate, width, height, frame_rate);
 		m_encoders[stream->index] = encoder = new VideoEncoder(this, stream, codec_context, codec, &options);
 #if SSR_USE_AVSTREAM_CODECPAR
@@ -110,13 +121,24 @@ VideoEncoder* Muxer::AddVideoEncoder(const QString& codec_name, const std::vecto
 }
 
 AudioEncoder* Muxer::AddAudioEncoder(const QString& codec_name, const std::vector<std::pair<QString, QString> >& codec_options,
-									 unsigned int bit_rate, unsigned int channels, unsigned int sample_rate) {
+									 unsigned int bit_rate, unsigned int channels, unsigned int sample_rate, double time_base) {
 	AVCodec *codec = FindCodec(codec_name);
 	AVCodecContext *codec_context = NULL;
 	AVStream *stream = AddStream(codec, &codec_context);
 	AudioEncoder *encoder;
 	AVDictionary *options = NULL;
 	try {
+		// 设置时基，如果提供了有效值
+		if(time_base > 0.0) {
+			codec_context->time_base.num = (int)(time_base * 1000000.0);
+			codec_context->time_base.den = 1000000;
+			// 简化分数
+			av_reduce(&codec_context->time_base.num, &codec_context->time_base.den,
+					  codec_context->time_base.num, codec_context->time_base.den, 1000000);
+			Logger::LogInfo("[Muxer::AddAudioEncoder] " + Logger::tr("Using custom time base: %1/%2 (%3).")
+							.arg(codec_context->time_base.num).arg(codec_context->time_base.den).arg(time_base));
+		}
+		
 		AudioEncoder::PrepareStream(stream, codec_context, codec, &options, codec_options, bit_rate, channels, sample_rate);
 		m_encoders[stream->index] = encoder = new AudioEncoder(this, stream, codec_context, codec, &options);
 #if SSR_USE_AVSTREAM_CODECPAR

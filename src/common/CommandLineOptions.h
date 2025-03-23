@@ -33,6 +33,7 @@ private:
 	QString m_settings_file;
 	QString m_log_file;
 	QString m_stats_file;
+	QString m_output_file;
 	bool m_redirect_stderr;
 	bool m_systray;
 	bool m_start_hidden;
@@ -41,6 +42,8 @@ private:
 	bool m_sync_diagram;
 	bool m_benchmark;
 	bool m_gui;
+	bool m_backend;
+	int m_http_port;
 
 	static CommandLineOptions *s_instance;
 
@@ -55,6 +58,7 @@ public:
 	inline static const QString& GetSettingsFile() { return GetInstance()->m_settings_file; }
 	inline static const QString& GetLogFile() { return GetInstance()->m_log_file; }
 	inline static const QString& GetStatsFile() { return GetInstance()->m_stats_file; }
+	inline static const QString& GetOutputFile() { return GetInstance()->m_output_file; }
 	inline static bool GetRedirectStderr() { return GetInstance()->m_redirect_stderr; }
 	inline static bool GetSysTray() { return GetInstance()->m_systray; }
 	inline static bool GetStartHidden() { return GetInstance()->m_start_hidden; }
@@ -63,6 +67,10 @@ public:
 	inline static bool GetSyncDiagram() { return GetInstance()->m_sync_diagram; }
 	inline static bool GetBenchmark() { return GetInstance()->m_benchmark; }
 	inline static bool GetGui() { return GetInstance()->m_gui; }
+	inline static bool GetBackend() { return GetInstance()->m_backend; }
+	inline static int GetHttpPort() { return GetInstance()->m_http_port; }
+
+	inline static void SetOutputFile(const QString& file) { GetInstance()->m_output_file = file; }
 
 };
 

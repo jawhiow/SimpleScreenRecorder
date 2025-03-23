@@ -26,25 +26,41 @@ along with SimpleScreenRecorder.  If not, see <http://www.gnu.org/licenses/>.
 #include <QPainter>
 #include <QResizeEvent>
 
+// Private implementation class (can be removed if not needed)
+class ElidedLabelPrivate {
+public:
+	ElidedLabelPrivate() {}
+	~ElidedLabelPrivate() {}
+};
+
 ElidedLabel::ElidedLabel(QWidget* parent, Qt::WindowFlags f)
-	: QLabel(parent, f), m_elide_mode(Qt::ElideRight) {
+	: QLabel(parent, f), m_elide_mode(Qt::ElideRight), d(nullptr) {
 	setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
 }
 
 ElidedLabel::ElidedLabel(const QString& txt, QWidget* parent, Qt::WindowFlags f)
-	: QLabel(txt, parent, f), m_elide_mode(Qt::ElideRight) {
+	: QLabel(txt, parent, f), m_elide_mode(Qt::ElideRight), d(nullptr) {
 	setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
 }
 
 ElidedLabel::ElidedLabel(const QString& txt, Qt::TextElideMode elideMode, QWidget* parent, Qt::WindowFlags f)
-	: QLabel(txt, parent, f), m_elide_mode(elideMode) {
+	: QLabel(txt, parent, f), m_elide_mode(elideMode), d(nullptr) {
 	setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
 }
 
+ElidedLabel::~ElidedLabel() {
+	delete d;
+}
+
 void ElidedLabel::setText(const QString& txt) {
+	m_full_text = txt;
 	QLabel::setText(txt);
 	cacheElidedText(geometry().width());
 	setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+}
+
+void ElidedLabel::setToolTip(const QString &tooltip) {
+	QLabel::setToolTip(tooltip);
 }
 
 void ElidedLabel::cacheElidedText(int w) {
@@ -65,4 +81,23 @@ void ElidedLabel::paintEvent(QPaintEvent* e) {
 				   QStyle::visualAlignment(text().isRightToLeft()? Qt::RightToLeft : Qt::LeftToRight, alignment()) | ((buddy() == NULL)? 0 : Qt::TextShowMnemonic),
 				   m_cached_elided_text);
 	}
+}
+
+void ElidedLabel::updateEliding() {
+	cacheElidedText(geometry().width());
+	update();
+}
+
+QSize ElidedLabel::minimumSizeHint() const {
+	QSize size = QLabel::minimumSizeHint();
+	if(m_elide_mode == Qt::ElideNone)
+		return size;
+	return QSize(10, size.height());
+}
+
+QSize ElidedLabel::sizeHint() const {
+	QSize size = QLabel::sizeHint();
+	if(m_elide_mode == Qt::ElideNone)
+		return size;
+	return QSize(size.width(), size.height());
 }

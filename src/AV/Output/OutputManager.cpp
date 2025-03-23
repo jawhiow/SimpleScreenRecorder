@@ -269,22 +269,66 @@ void OutputManager::StartFragment() {
 	} else {
 		filename = m_output_settings.file;
 	}
-	std::unique_ptr<Muxer> muxer(new Muxer(m_output_settings.container_avname, filename));
-	VideoEncoder *video_encoder = NULL;
-	AudioEncoder *audio_encoder = NULL;
-	if(!m_output_settings.video_codec_avname.isEmpty())
-		video_encoder = muxer->AddVideoEncoder(m_output_settings.video_codec_avname, m_output_settings.video_options, m_output_settings.video_kbit_rate * 1000,
-											   m_output_settings.video_width, m_output_settings.video_height, m_output_settings.video_frame_rate);
-	if(!m_output_settings.audio_codec_avname.isEmpty())
-		audio_encoder = muxer->AddAudioEncoder(m_output_settings.audio_codec_avname, m_output_settings.audio_options, m_output_settings.audio_kbit_rate * 1000,
-											   m_output_settings.audio_channels, m_output_settings.audio_sample_rate);
-	muxer->Start();
+	try {
+		Logger::LogInfo("[OutputManager::StartFragment] Creating muxer for file: " + filename);
+		std::unique_ptr<Muxer> muxer(new Muxer(m_output_settings.container_avname, filename));
+		VideoEncoder *video_encoder = NULL;
+		AudioEncoder *audio_encoder = NULL;
 
-	// acquire lock and share the muxer and encoders
-	SharedLock lock(&m_shared_data);
-	lock->m_muxer = std::move(muxer);
-	lock->m_video_encoder = video_encoder;
-	lock->m_audio_encoder = audio_encoder;
+		// 检查视频参数是否有效
+		if(!m_output_settings.video_codec_avname.isEmpty()) {
+			if(m_output_settings.video_width <= 0 || m_output_settings.video_height <= 0) {
+				Logger::LogWarning("[OutputManager::StartFragment] " + Logger::tr("Warning: Invalid video dimensions, using default values."));
+				m_output_settings.video_width = 1280;
+				m_output_settings.video_height = 720;
+			}
+			if(m_output_settings.video_frame_rate <= 0) {
+				Logger::LogWarning("[OutputManager::StartFragment] " + Logger::tr("Warning: Invalid video frame rate, using default value."));
+				m_output_settings.video_frame_rate = 30;
+			}
+			
+			Logger::LogInfo("[OutputManager::StartFragment] " + Logger::tr("Adding video encoder: size=%1x%2 fps=%3")
+				.arg(m_output_settings.video_width).arg(m_output_settings.video_height).arg(m_output_settings.video_frame_rate));
+			
+			double video_time_base = (m_output_settings.video_frame_rate > 0) ? (1.0 / (double)m_output_settings.video_frame_rate) : 0.0;
+			video_encoder = muxer->AddVideoEncoder(m_output_settings.video_codec_avname, m_output_settings.video_options, m_output_settings.video_kbit_rate * 1000,
+											   m_output_settings.video_width, m_output_settings.video_height, m_output_settings.video_frame_rate, video_time_base);
+		}
+		
+		if(!m_output_settings.audio_codec_avname.isEmpty()) {
+			// 确保音频参数有效
+			if(m_output_settings.audio_channels <= 0) {
+				Logger::LogWarning("[OutputManager::StartFragment] " + Logger::tr("Warning: Invalid audio channels, using default value."));
+				m_output_settings.audio_channels = 2;
+			}
+			if(m_output_settings.audio_sample_rate <= 0) {
+				Logger::LogWarning("[OutputManager::StartFragment] " + Logger::tr("Warning: Invalid audio sample rate, using default value."));
+				m_output_settings.audio_sample_rate = 48000;
+			}
+			
+			Logger::LogInfo("[OutputManager::StartFragment] " + Logger::tr("Adding audio encoder: channels=%1 sample rate=%2")
+				.arg(m_output_settings.audio_channels).arg(m_output_settings.audio_sample_rate));
+			
+			// 使用正确的参数集调用AddAudioEncoder，包括时间基准
+			double audio_time_base = (m_output_settings.audio_sample_rate > 0) ? (1.0 / (double)m_output_settings.audio_sample_rate) : 0.0;
+			audio_encoder = muxer->AddAudioEncoder(m_output_settings.audio_codec_avname, m_output_settings.audio_options, m_output_settings.audio_kbit_rate * 1000,
+											   m_output_settings.audio_channels, m_output_settings.audio_sample_rate, audio_time_base);
+		}
+		
+		muxer->Start();
+		
+		// acquire lock and share the muxer and encoders
+		SharedLock lock(&m_shared_data);
+		lock->m_muxer = std::move(muxer);
+		lock->m_video_encoder = video_encoder;
+		lock->m_audio_encoder = audio_encoder;
+	} catch(const std::exception& e) {
+		Logger::LogError("[OutputManager::StartFragment] " + Logger::tr("Error: %1").arg(e.what()));
+		throw;
+	} catch(...) {
+		Logger::LogError("[OutputManager::StartFragment] " + Logger::tr("Unknown error!"));
+		throw;
+	}
 
 	// increment fragment number
 	// It's important that this is done here (i.e. after the encoders have been set up), because the fragment number

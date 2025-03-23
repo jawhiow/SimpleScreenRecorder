@@ -195,6 +195,13 @@ public:
 	void StartInput();
 	void StopInput();
 
+	// API methods for HTTP server
+	bool IsRecording() const { return m_page_started && m_output_started; }
+	bool IsPaused() const { return m_page_started && !m_output_started; }
+	QString GetCurrentFileName() const { return m_output_settings.file; }
+	int64_t GetCurrentFileSize() const;
+	QString GetTotalTime() const;
+
 private:
 	void FinishOutput();
 	void UpdateInput();
@@ -241,13 +248,12 @@ public slots:
 	void OnUpdateSoundNotifications();
 #endif
 	void OnUpdateRecordingFrame();
-
-public slots:
 	void OnRecordStart();
 	void OnRecordPause();
 	void OnRecordStartPause();
 	void OnRecordCancel(bool confirm = true);
 	void OnRecordSave(bool confirm = true);
+
 	void OnScheduleTimer();
 	void OnScheduleActivate();
 	void OnScheduleDeactivate();

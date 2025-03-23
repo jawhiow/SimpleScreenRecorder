@@ -66,9 +66,9 @@ public:
 
 	// Adds a video or audio encoder.
 	VideoEncoder* AddVideoEncoder(const QString& codec_name, const std::vector<std::pair<QString, QString> >& codec_options, unsigned int bit_rate,
-								  unsigned int width, unsigned int height, unsigned int frame_rate);
+								  unsigned int width, unsigned int height, unsigned int frame_rate, double time_base = 0.0);
 	AudioEncoder* AddAudioEncoder(const QString& codec_name, const std::vector<std::pair<QString, QString> >& codec_options, unsigned int bit_rate,
-								  unsigned int channels, unsigned int sample_rate);
+								  unsigned int channels, unsigned int sample_rate, double time_base = 0.0);
 
 	// Starts the muxer. You can't create new encoders after calling this function.
 	void Start();

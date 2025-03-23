@@ -27,11 +27,11 @@ if(WITH_JACK)
 endif()
 
 if(WITH_QT6)
-	find_package(Qt6 6.2 COMPONENTS Core Gui Widgets REQUIRED)
+	find_package(Qt6 6.2 COMPONENTS Core Gui Widgets Network REQUIRED)
 elseif(WITH_QT5)
-	find_package(Qt5 5.7 COMPONENTS Core Gui Widgets X11Extras REQUIRED)
+	find_package(Qt5 5.7 COMPONENTS Core Gui Widgets X11Extras Network REQUIRED)
 else()
-	find_package(Qt4 4.8 COMPONENTS QtGui REQUIRED)
+	find_package(Qt4 4.8 COMPONENTS QtGui QtNetwork REQUIRED)
 endif()
 
 set(sources
@@ -107,6 +107,8 @@ set(sources
 	common/ScreenScaling.cpp
 	common/ScreenScaling.h
 	common/TempBuffer.h
+	common/HTTPServer.cpp
+	common/HTTPServer.h
 	GUI/AudioPreviewer.cpp
 	GUI/AudioPreviewer.h
 	GUI/DialogGLInject.cpp
@@ -176,6 +178,7 @@ if(WITH_QT6)
 		Qt6::Core
 		Qt6::Gui
 		Qt6::Widgets
+		Qt6::Network
 	)
 elseif(WITH_QT5)
 	qt5_add_resources(res_output ${res_input})
@@ -184,11 +187,13 @@ elseif(WITH_QT5)
 		Qt5::Gui
 		Qt5::Widgets
 		Qt5::X11Extras
+		Qt5::Network
 	)
 else()
 	qt4_add_resources(res_output ${res_input})
 	set(QT_LIBS
 		Qt4::QtGui
+		Qt4::QtNetwork
 	)
 endif()
 

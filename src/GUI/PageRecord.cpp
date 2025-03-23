@@ -59,6 +59,17 @@ along with SimpleScreenRecorder.  If not, see <http://www.gnu.org/licenses/>.
 
 static QString GetNewSegmentFile(const QString& file, bool add_timestamp) {
 	QFileInfo fi(file);
+	
+	// 确保路径存在
+	QString path = fi.path();
+	if(path.isEmpty() || path == ".") {
+		path = QDir::currentPath();
+	}
+	QDir dir(path);
+	if(!dir.exists()) {
+		dir.mkpath(".");
+	}
+	
 	QDateTime now = QDateTime::currentDateTime();
 	QString newfile;
 	unsigned int counter = 0;
@@ -77,8 +88,12 @@ static QString GetNewSegmentFile(const QString& file, bool add_timestamp) {
 		}
 		if(!fi.suffix().isEmpty())
 			newfile += "." + fi.suffix();
-		newfile = fi.path() + "/" + newfile;
+		
+		// 使用绝对路径
+		newfile = dir.absoluteFilePath(newfile);
+		
 	} while(QFileInfo(newfile).exists());
+	
 	return newfile;
 }
 
@@ -462,12 +477,22 @@ void PageRecord::UpdateShowHide() {
 }
 
 void PageRecord::LoadSettings(QSettings *settings) {
-	SetHotkeyEnabled(settings->value("record/hotkey_enable", true).toBool());
-	SetHotkeyCtrlEnabled(settings->value("record/hotkey_ctrl", false).toBool());
-	SetHotkeyShiftEnabled(settings->value("record/hotkey_shift", false).toBool());
-	SetHotkeyAltEnabled(settings->value("record/hotkey_alt", false).toBool());
-	SetHotkeySuperEnabled(settings->value("record/hotkey_super", true).toBool());
-	SetHotkeyKey(settings->value("record/hotkey_key", 'r' - 'a').toUInt());
+	// 检查是否处于后台模式，如果是，则不加载热键设置
+	if(!CommandLineOptions::GetBackend()) {
+		// 仅在非后台模式下加载热键设置
+		SetHotkeyEnabled(settings->value("record/hotkey_enable", true).toBool());
+		SetHotkeyCtrlEnabled(settings->value("record/hotkey_ctrl", false).toBool());
+		SetHotkeyShiftEnabled(settings->value("record/hotkey_shift", false).toBool());
+		SetHotkeyAltEnabled(settings->value("record/hotkey_alt", false).toBool());
+		SetHotkeySuperEnabled(settings->value("record/hotkey_super", true).toBool());
+		SetHotkeyKey(settings->value("record/hotkey_key", 'r' - 'a').toUInt());
+		OnUpdateHotkeyFields();
+	} else {
+		// 在后台模式下禁用热键
+		SetHotkeyEnabled(false);
+		Logger::LogInfo("[PageRecord::LoadSettings] " + tr("Hotkeys disabled in backend mode"));
+	}
+	
 #if SSR_USE_ALSA
 	SetSoundNotificationsEnabled(settings->value("record/sound_notifications_enable", false).toBool());
 #endif
@@ -493,7 +518,6 @@ void PageRecord::LoadSettings(QSettings *settings) {
 #endif
 		m_schedule_entries[i].action = StringToEnum(actionstring, SCHEDULE_ACTION_START);
 	}
-	OnUpdateHotkeyFields();
 #if SSR_USE_ALSA
 	OnUpdateSoundNotifications();
 #endif
@@ -521,12 +545,201 @@ void PageRecord::SaveSettings(QSettings *settings) {
 }
 
 bool PageRecord::TryStartPage() {
-	if(m_page_started)
+	Logger::LogInfo("[PageRecord::TryStartPage] " + tr("Starting attempt..."));
+	
+	if(m_page_started) {
+		Logger::LogInfo("[PageRecord::TryStartPage] " + tr("Page already started"));
 		return true;
-	if(!m_main_window->Validate())
-		return false;
-	m_main_window->GoPageRecord();
-	assert(m_page_started);
+	}
+
+	// 检查是否为后台模式
+	bool backend_mode = CommandLineOptions::GetBackend();
+	Logger::LogInfo("[PageRecord::TryStartPage] " + tr("Backend mode: %1").arg(backend_mode ? "yes" : "no"));
+
+	// 如果是GUI模式，需要验证
+	if(!backend_mode) {
+		if(m_main_window->IsBusy())
+			return false;
+		if(!m_main_window->Validate())
+			return false;
+	}
+
+	// 对于后台模式，使用最小化设置
+	if(backend_mode) {
+		Logger::LogInfo("[PageRecord::TryStartPage] " + tr("Setting up backend mode..."));
+		
+		try {
+			// 获取输入输出对象，并检查它们是否有效
+			Logger::LogInfo("[PageRecord::TryStartPage] " + tr("Getting PageInput..."));
+			PageInput *page_input = m_main_window->GetPageInput();
+			if(page_input == NULL) {
+				Logger::LogError("[PageRecord::TryStartPage] " + tr("Error: Could not get PageInput!"));
+				return false;
+			}
+			
+			Logger::LogInfo("[PageRecord::TryStartPage] " + tr("Getting PageOutput..."));
+			PageOutput *page_output = m_main_window->GetPageOutput();
+			if(page_output == NULL) {
+				Logger::LogError("[PageRecord::TryStartPage] " + tr("Error: Could not get PageOutput!"));
+				return false;
+			}
+			
+			// 设置录制参数
+			Logger::LogInfo("[PageRecord::TryStartPage] " + tr("Setting up recording parameters..."));
+			
+			// 视频设置
+			try {
+				m_video_backend = page_input->GetVideoBackend();
+				Logger::LogInfo("[PageRecord::TryStartPage] " + tr("Video backend: %1").arg(m_video_backend));
+				
+				m_video_x11_area = page_input->GetVideoX11Area();
+				m_video_x11_follow_fullscreen = page_input->GetVideoX11FollowFullscreen();
+				
+				m_video_x = page_input->GetVideoX11X();
+				m_video_y = page_input->GetVideoX11Y();
+				
+				m_video_in_width = page_input->GetVideoX11Width();
+				m_video_in_height = page_input->GetVideoX11Height();
+				
+				Logger::LogInfo("[PageRecord::TryStartPage] " + tr("Video area: %1x%2 at %3,%4").arg(m_video_in_width).arg(m_video_in_height).arg(m_video_x).arg(m_video_y));
+				
+				m_video_frame_rate = page_input->GetVideoFrameRate();
+				
+				// 确保在后台模式下设置了帧率，这对设置时间基准非常重要
+				if(m_video_frame_rate <= 0) {
+					m_video_frame_rate = 30; // 使用默认帧率
+					Logger::LogWarning("[PageRecord::TryStartPage] " + tr("Warning: Using default frame rate %1").arg(m_video_frame_rate));
+				}
+				
+				Logger::LogInfo("[PageRecord::TryStartPage] " + tr("Video frame rate: %1").arg(m_video_frame_rate));
+				
+				m_video_scaling = page_input->GetVideoScalingEnabled();
+				m_video_scaled_width = page_input->GetVideoScaledWeight();
+				m_video_scaled_height = page_input->GetVideoScaledHeight();
+				m_video_record_cursor = page_input->GetVideoRecordCursor();
+				
+				// 在后台模式下，如果尺寸为0，设置默认尺寸
+				if(m_video_in_width <= 0 || m_video_in_height <= 0) {
+					m_video_in_width = 1280;
+					m_video_in_height = 720;
+					Logger::LogWarning("[PageRecord::TryStartPage] " + tr("Warning: Using default resolution %1x%2").arg(m_video_in_width).arg(m_video_in_height));
+				}
+				
+				// 确保宽度和高度是偶数
+				m_video_in_width = (m_video_in_width / 2) * 2;
+				m_video_in_height = (m_video_in_height / 2) * 2;
+			} catch(const std::exception& e) {
+				Logger::LogError("[PageRecord::TryStartPage] " + tr("Error setting video parameters: %1").arg(e.what()));
+				return false;
+			} catch(...) {
+				Logger::LogError("[PageRecord::TryStartPage] " + tr("Unknown error setting video parameters!"));
+				return false;
+			}
+			
+			// 音频设置
+			try {
+				m_audio_enabled = page_input->GetAudioEnabled();
+				m_audio_channels = 2; // 固定值
+				m_audio_sample_rate = 48000; // 固定值
+				m_audio_backend = page_input->GetAudioBackend();
+				
+				Logger::LogInfo("[PageRecord::TryStartPage] " + tr("Audio enabled: %1, Backend: %2").arg(m_audio_enabled ? "yes" : "no").arg(m_audio_backend));
+			} catch(const std::exception& e) {
+				Logger::LogError("[PageRecord::TryStartPage] " + tr("Error setting audio parameters: %1").arg(e.what()));
+				return false;
+			} catch(...) {
+				Logger::LogError("[PageRecord::TryStartPage] " + tr("Unknown error setting audio parameters!"));
+				return false;
+			}
+			
+			// 输出设置
+			Logger::LogInfo("[PageRecord::TryStartPage] " + tr("Setting up output parameters..."));
+			try {
+				m_output_settings.container_avname = page_output->GetContainerAVName();
+				m_output_settings.video_codec_avname = page_output->GetVideoCodecAVName();
+				m_output_settings.video_kbit_rate = page_output->GetVideoKBitRate();
+				m_output_settings.audio_codec_avname = page_output->GetAudioCodecAVName();
+				m_output_settings.audio_kbit_rate = page_output->GetAudioKBitRate();
+				
+				// 获取文件路径，确保使用绝对路径
+				QString filepath = page_output->GetFile();
+				
+				// 如果命令行选项设置了输出文件，则使用它
+				if(!CommandLineOptions::GetOutputFile().isEmpty()) {
+					filepath = CommandLineOptions::GetOutputFile();
+					Logger::LogInfo("[PageRecord::TryStartPage] " + tr("Using output file from command line: %1").arg(filepath));
+				}
+				
+				// 检查路径是否为绝对路径
+				QFileInfo fileInfo(filepath);
+				if(!fileInfo.isAbsolute()) {
+					// 如果是相对路径，使用当前目录作为基础路径
+					QString currentDir = QDir::currentPath();
+					filepath = QDir(currentDir).filePath(filepath);
+					Logger::LogInfo("[PageRecord::TryStartPage] " + tr("Converting relative path to absolute: %1").arg(filepath));
+				}
+				
+				// 确保文件所在目录存在
+				QFileInfo pathInfo(filepath);
+				QDir dir = pathInfo.dir();
+				if(!dir.exists()) {
+					Logger::LogInfo("[PageRecord::TryStartPage] " + tr("Creating output directory: %1").arg(dir.path()));
+					if(!dir.mkpath(".")) {
+						Logger::LogError("[PageRecord::TryStartPage] " + tr("Error: Could not create output directory!"));
+						return false;
+					}
+				}
+				
+				// 检查是否有文件扩展名，如果没有，添加默认扩展名
+				if(pathInfo.suffix().isEmpty()) {
+					if(m_output_settings.container_avname.contains("matroska", Qt::CaseInsensitive)) {
+						filepath += ".mkv";
+					} else if(m_output_settings.container_avname.contains("mp4", Qt::CaseInsensitive)) {
+						filepath += ".mp4";
+					} else if(m_output_settings.container_avname.contains("webm", Qt::CaseInsensitive)) {
+						filepath += ".webm";
+					} else {
+						filepath += ".mkv"; // 默认格式
+					}
+					Logger::LogInfo("[PageRecord::TryStartPage] " + tr("Added file extension: %1").arg(filepath));
+				}
+				
+				m_output_settings.file = filepath;
+				m_file_base = filepath; // 保存基本文件名，用于分段录制
+				
+				Logger::LogInfo("[PageRecord::TryStartPage] " + tr("Output file: %1").arg(m_output_settings.file));
+			} catch(const std::exception& e) {
+				Logger::LogError("[PageRecord::TryStartPage] " + tr("Error setting output parameters: %1").arg(e.what()));
+				return false;
+			} catch(...) {
+				Logger::LogError("[PageRecord::TryStartPage] " + tr("Unknown error setting output parameters!"));
+				return false;
+			}
+			
+			// 初始化状态
+			Logger::LogInfo("[PageRecord::TryStartPage] " + tr("Initializing recording state..."));
+			m_page_started = true;
+			m_recorded_something = false;
+			m_wait_saving = false;
+			m_error_occurred = false;
+			
+			// 确保在后台模式下禁用热键
+			SetHotkeyEnabled(false);
+			
+			Logger::LogInfo("[PageRecord::TryStartPage] " + tr("Started page in backend mode."));
+			return true;
+		} catch(const std::exception& e) {
+			Logger::LogError("[PageRecord::TryStartPage] " + tr("Error during setup: %1").arg(e.what()));
+			return false;
+		} catch(...) {
+			Logger::LogError("[PageRecord::TryStartPage] " + tr("Unknown error during setup!"));
+			return false;
+		}
+	}
+	
+	// 对于GUI模式，正常启动页面
+	Logger::LogInfo("[PageRecord::TryStartPage] " + tr("Starting page in GUI mode..."));
+	StartPage();
 	return true;
 }
 
@@ -809,7 +1022,28 @@ void PageRecord::StartOutput() {
 		if(m_output_manager == NULL) {
 
 			// set the file name
-			m_output_settings.file = GetNewSegmentFile(m_file_base, m_add_timestamp);
+			if(m_output_settings.file.isEmpty() || m_file_base.isEmpty()) {
+				Logger::LogError("[PageRecord::StartOutput] " + tr("Error: Output file name is empty!"));
+				throw std::runtime_error("Empty output file name");
+			}
+			
+			// 使用基本文件名或从基本文件名生成新的分段文件名
+			if(m_separate_files || m_add_timestamp) {
+				m_output_settings.file = GetNewSegmentFile(m_file_base, m_add_timestamp);
+			} else if(m_output_settings.file.isEmpty()) {
+				m_output_settings.file = m_file_base;
+			}
+
+			// 确保文件所在目录存在
+			QFileInfo pathInfo(m_output_settings.file);
+			QDir dir = pathInfo.dir();
+			if(!dir.exists()) {
+				Logger::LogInfo("[PageRecord::StartOutput] " + tr("Creating output directory: %1").arg(dir.path()));
+				if(!dir.mkpath(".")) {
+					Logger::LogError("[PageRecord::StartOutput] " + tr("Error: Could not create output directory!"));
+					throw std::runtime_error("Could not create output directory");
+				}
+			}
 
 			// log the file name
 			{
@@ -843,6 +1077,23 @@ void PageRecord::StartOutput() {
 			}
 #endif
 
+			// 确保视频尺寸有效
+			if(m_video_in_width <= 0 || m_video_in_height <= 0) {
+				m_video_in_width = 1280;
+				m_video_in_height = 720;
+				Logger::LogWarning("[PageRecord::StartOutput] " + tr("Warning: Using default resolution %1x%2").arg(m_video_in_width).arg(m_video_in_height));
+			}
+			
+			// 确保帧率有效
+			if(m_video_frame_rate <= 0) {
+				m_video_frame_rate = 30;
+				Logger::LogWarning("[PageRecord::StartOutput] " + tr("Warning: Using default frame rate %1").arg(m_video_frame_rate));
+			}
+			
+			// 确保宽度和高度是偶数
+			m_video_in_width = (m_video_in_width / 2) * 2;
+			m_video_in_height = (m_video_in_height / 2) * 2;
+
 			// calculate the output width and height
 			if(m_video_scaling) {
 				// Only even width and height is allowed because some pixel formats (e.g. YUV420) require this.
@@ -862,7 +1113,10 @@ void PageRecord::StartOutput() {
 				m_output_settings.video_width = m_video_in_width;
 				m_output_settings.video_height = m_video_in_height;
 			}
-
+			
+			// 记录最终的视频参数
+			Logger::LogInfo("[PageRecord::StartOutput] " + tr("Output video: %1x%2 %3 FPS").arg(m_output_settings.video_width).arg(m_output_settings.video_height).arg(m_video_frame_rate));
+			
 			// start the output
 			m_output_manager.reset(new OutputManager(m_output_settings));
 
@@ -1222,6 +1476,12 @@ void PageRecord::OnUpdateHotkeyFields() {
 }
 
 void PageRecord::OnUpdateHotkey() {
+	// 在后台模式下不绑定热键
+	if(CommandLineOptions::GetBackend()) {
+		m_hotkey_start_pause.Unbind();
+		return;
+	}
+	
 	if(IsHotkeyEnabled()) {
 		unsigned int modifiers = 0;
 		if(IsHotkeyCtrlEnabled()) modifiers |= ControlMask;
@@ -1295,7 +1555,6 @@ void PageRecord::OnRecordStartPause() {
 		OnRecordStart();
 	}
 }
-
 
 void PageRecord::OnRecordCancel(bool confirm) {
 	if(m_main_window->IsBusy())
@@ -1626,4 +1885,21 @@ void PageRecord::OnNewLogLine(Logger::enum_type type, QString string) {
 	if(should_scroll)
 		m_textedit_log->verticalScrollBar()->setValue(m_textedit_log->verticalScrollBar()->maximum());
 
+}
+
+int64_t PageRecord::GetCurrentFileSize() const {
+	if(m_output_manager && m_page_started) {
+		QFileInfo fileInfo(m_output_settings.file);
+		if(fileInfo.exists()) {
+			return fileInfo.size();
+		}
+	}
+	return 0;
+}
+
+QString PageRecord::GetTotalTime() const {
+	if(m_label_info_total_time && !m_label_info_total_time->text().isEmpty()) {
+		return m_label_info_total_time->text();
+	}
+	return "00:00:00";
 }

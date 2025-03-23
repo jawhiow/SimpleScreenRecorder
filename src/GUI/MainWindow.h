@@ -88,4 +88,6 @@ public slots:
 	void OnShowHide();
 	void OnSysTrayActivated(QSystemTrayIcon::ActivationReason reason);
 
+	inline PageRecord* GetPageRecord() { return (PageRecord*) m_page_record; }
+
 };
